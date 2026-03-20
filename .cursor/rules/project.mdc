@@ -1,0 +1,61 @@
+---
+description: Local OIDC provider standards for backend testing
+alwaysApply: true
+---
+
+# Local OIDC Test Provider (Keycloak-compatible mindset)
+
+## Preferred Stack
+- Use Node.js + TypeScript.
+- Framework: Fastify (HTTP API) + openid-provider (OIDC server).
+- JWT signing: jose.
+- UI: simple server-rendered pages (Nunjucks/Handlebars) or minimal React/Vite.
+
+## Why Node.js here
+- `openid-provider` is mature and purpose-built for OIDC/OAuth2 flows.
+- Faster setup for a lightweight local identity emulator.
+- Easy JWT/JWKS handling and standard OIDC discovery endpoints.
+
+## Functional Requirements
+- Must run locally as a lightweight OIDC provider for Web API testing.
+- Test users are defined in config and do not require TOTP.
+- Provide a simple web UI to "act as user" and issue tokens quickly.
+- Expose standard OIDC endpoints:
+  - `/.well-known/openid-configuration`
+  - `/protocol/openid-connect/auth`
+  - `/protocol/openid-connect/token`
+  - `/protocol/openid-connect/certs` (JWKS)
+- Issue signed JWT access tokens (and optionally ID tokens) with role claims.
+
+## Claims and Token Conventions
+- Keep claims compatible with existing backend authorization checks.
+- Include standard claims: `iss`, `aud`, `sub`, `exp`, `iat`, `scope`.
+- Include role claims in Keycloak-like shape when needed:
+  - `realm_access.roles`
+  - `resource_access.{clientId}.roles`
+- Support configurable issuer, audience, client IDs, scopes, token lifetime.
+
+## Configuration Rules
+- Store test identities in a single config file (`users.yaml` or `users.json`).
+- Each user entry should define:
+  - `username`
+  - `sub`
+  - `email` (optional)
+  - `roles` (realm and/or client roles)
+  - `scopes`
+- Never hardcode users in application code.
+
+## UI Rules
+- Provide a minimal "Login as" page listing test users.
+- One-click user selection should establish session and allow token issuance.
+- Show issued token and decoded claims for easy API testing.
+
+## Security and Boundaries
+- Local/dev use only; do not deploy as production identity provider.
+- Keep private signing keys in local-only storage (env/file), never committed.
+- Default bind address should be localhost.
+
+## Implementation Guidance
+- Prefer simple, explicit code over heavy abstractions.
+- Add integration tests for discovery, token issuance, and claim shape.
+- Keep startup with a single command (`npm run dev` / `docker compose up`).
