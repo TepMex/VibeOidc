@@ -1,0 +1,22 @@
+[
+  {
+    "username": "alice",
+    "sub": "user-alice-001",
+    "email": "alice@example.local",
+    "realmRoles": ["admin", "developer"],
+    "clientRoles": {
+      "local-api": ["read", "write"]
+    },
+    "scopes": ["openid", "profile", "email", "roles"]
+  },
+  {
+    "username": "bob",
+    "sub": "user-bob-001",
+    "email": "bob@example.local",
+    "realmRoles": ["viewer"],
+    "clientRoles": {
+      "local-api": ["read"]
+    },
+    "scopes": ["openid", "profile", "roles"]
+  }
+]
