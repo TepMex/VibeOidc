@@ -280,6 +280,7 @@ export async function setupOidcProvider(
     );
 
     const accessToken = await new SignJWT({
+      typ: "Bearer",
       scope,
       realm_access: realmAccess,
       resource_access: resourceAccess
@@ -293,6 +294,7 @@ export async function setupOidcProvider(
       .sign(signingKey);
 
     const idToken = await new SignJWT({
+      typ: "Bearer",
       email: user.email,
       preferred_username: user.username,
       realm_access: realmAccess,
