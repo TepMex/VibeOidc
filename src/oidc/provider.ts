@@ -86,6 +86,13 @@ export async function setupOidcProvider(
   const signingKey = await importJWK(signingJwk, "RS256");
 
   const oidcConfig: Configuration = {
+    routes: {
+      authorization: "/protocol/openid-connect/auth",
+      token: "/protocol/openid-connect/token",
+      jwks: "/protocol/openid-connect/certs",
+      userinfo: "/protocol/openid-connect/userinfo",
+      introspection: "/protocol/openid-connect/token/introspect"
+    },
     clients: [
       {
         client_id: config.clientId,
