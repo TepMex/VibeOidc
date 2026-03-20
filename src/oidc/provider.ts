@@ -169,9 +169,9 @@ export async function setupOidcProvider(
 
   app.post("/login/:uid", async (request: FastifyRequest<{ Body: LoginBody }>, reply: FastifyReply) => {
     const { uid } = request.params as { uid: string };
-    const selectedUsername = request.body?.username;
+    const selectedUsernameInput = request.body?.username;
 
-    if (!selectedUsername || !userIndex.byUsername.has(selectedUsername)) {
+    if (!selectedUsernameInput || !userIndex.byUsername.has(selectedUsernameInput)) {
       return reply.code(400).type("text/plain").send("Unknown user selection");
     }
 
@@ -180,7 +180,7 @@ export async function setupOidcProvider(
       return reply.code(400).type("text/plain").send("Invalid interaction uid");
     }
 
-    const user = userIndex.byUsername.get(selectedUsername);
+    const user = userIndex.byUsername.get(selectedUsernameInput);
     if (!user) {
       return reply.code(400).type("text/plain").send("Unknown user");
     }
@@ -213,7 +213,7 @@ export async function setupOidcProvider(
     return userIndex.byUsername.get(candidate);
   }
 
-  app.post("/ui/token", async (request, reply) => {
+  async function issueTokensForSelectedUser(request: FastifyRequest, reply: FastifyReply) {
     const user = getSelectedUserFromRequest(request);
     if (!user) {
       return reply.code(400).send({
@@ -264,7 +264,10 @@ export async function setupOidcProvider(
       access_token: accessToken,
       id_token: idToken
     });
-  });
+  }
+
+  app.post("/ui/token", issueTokensForSelectedUser);
+  app.post("/protocol/openid-connect/token", issueTokensForSelectedUser);
 
   // Test override endpoints:
   // always return selected user roles regardless of provided token value.
