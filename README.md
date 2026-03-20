@@ -74,3 +74,12 @@ When redirected to `/login/:uid`, pick a user, then exchange `code` at `/protoco
 - Click a user button to start authorize flow (this sets selected user in cookie)
 - After callback, click "Issue token for selected user"
 - `/ui/token` ignores `client_id`, `client_secret`, and `grant_type` and always returns tokens for selected UI user
+
+## Backend config compatibility
+
+If your backend expects `Issuer` and raw `JwtPublicKey` fields:
+
+- Issuer: `http://127.0.0.1:4100` (or your `OIDC_ISSUER`)
+- JwtPublicKey endpoint: `/protocol/openid-connect/jwt-public-key`
+- Helper JSON config: `/protocol/openid-connect/backend-config`
+- JWKS endpoint (standard): `/protocol/openid-connect/certs`

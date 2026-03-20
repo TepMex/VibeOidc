@@ -1,4 +1,4 @@
-import { generateKeyPair, exportJWK, importJWK, SignJWT, type JWK } from "jose";
+import { generateKeyPair, exportJWK, exportSPKI, importJWK, SignJWT, type JWK } from "jose";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import Provider, { type Configuration } from "oidc-provider";
 
@@ -34,9 +34,10 @@ function makeUserIndex(users: TestUser[]): UserIndex {
   return { byUsername, bySub, allScopes };
 }
 
-async function createJwks(): Promise<{ keys: JWK[] }> {
-  const { privateKey } = await generateKeyPair("RS256");
+async function createJwks(): Promise<{ keys: JWK[]; publicKeyPem: string }> {
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
   const jwk = await exportJWK(privateKey);
+  const publicKeyPem = await exportSPKI(publicKey);
 
   return {
     keys: [
@@ -46,7 +47,8 @@ async function createJwks(): Promise<{ keys: JWK[] }> {
         use: "sig",
         kid: "local-dev-rs256"
       }
-    ]
+    ],
+    publicKeyPem
   };
 }
 
@@ -79,6 +81,7 @@ export async function setupOidcProvider(
   const userIndex = makeUserIndex(users);
   let selectedUsername = users[0]?.username;
   const jwks = await createJwks();
+  const jwtPublicKeyPem = jwks.publicKeyPem;
   const signingJwk = jwks.keys[0];
   const signingKey = await importJWK(signingJwk, "RS256");
 
@@ -322,6 +325,20 @@ export async function setupOidcProvider(
       resource_access: Object.fromEntries(
         Object.entries(user.clientRoles ?? {}).map(([clientId, roles]) => [clientId, { roles }])
       )
+    });
+  });
+
+  // Backend compatibility helpers for systems configured with Issuer + JwtPublicKey.
+  app.get("/protocol/openid-connect/jwt-public-key", async (_request, reply) => {
+    reply.type("text/plain").send(jwtPublicKeyPem);
+  });
+
+  app.get("/protocol/openid-connect/backend-config", async (_request, reply) => {
+    return reply.send({
+      issuer: config.issuer,
+      jwtPublicKey: jwtPublicKeyPem,
+      jwtPublicKeyUrl: `${config.issuer}/protocol/openid-connect/jwt-public-key`,
+      jwksUrl: `${config.issuer}/protocol/openid-connect/certs`
     });
   });
 
