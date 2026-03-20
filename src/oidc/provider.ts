@@ -1,6 +1,8 @@
 import { generateKeyPair, exportJWK, exportSPKI, importJWK, SignJWT, type JWK } from "jose";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import Provider, { type Configuration } from "oidc-provider";
+import Provider from "oidc-provider";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import type { AppConfig } from "../config/env.js";
 import type { TestUser } from "../config/users.js";
@@ -10,6 +12,7 @@ type LoginBody = {
 };
 
 const SELECTED_USER_COOKIE = "vibe_selected_user";
+const SIGNING_KEY_FILE = "keys/jwt-signing-key.json";
 
 type UserIndex = {
   byUsername: Map<string, TestUser>;
@@ -34,21 +37,53 @@ function makeUserIndex(users: TestUser[]): UserIndex {
   return { byUsername, bySub, allScopes };
 }
 
-async function createJwks(): Promise<{ keys: JWK[]; publicKeyPem: string }> {
-  const { privateKey, publicKey } = await generateKeyPair("RS256");
-  const jwk = await exportJWK(privateKey);
-  const publicKeyPem = await exportSPKI(publicKey);
+type StoredSigningKey = {
+  privateJwk: JWK;
+  publicKeyData: string;
+};
 
+function pemToKeyData(pem: string): string {
+  return pem
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .replace(/\s+/g, "");
+}
+
+async function loadOrCreateSigningKey(): Promise<StoredSigningKey> {
+  const fullPath = resolve(process.cwd(), SIGNING_KEY_FILE);
+  try {
+    const existing = await readFile(fullPath, "utf8");
+    const parsed = JSON.parse(existing) as StoredSigningKey;
+    if (parsed?.privateJwk && parsed?.publicKeyData) {
+      return parsed;
+    }
+  } catch {
+    // File does not exist or cannot be parsed; generate and persist a new key.
+  }
+
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const privateJwk = await exportJWK(privateKey);
+  const publicKeyPem = await exportSPKI(publicKey);
+  const stored: StoredSigningKey = {
+    privateJwk: {
+      ...privateJwk,
+      alg: "RS256",
+      use: "sig",
+      kid: "local-dev-rs256"
+    },
+    publicKeyData: pemToKeyData(publicKeyPem)
+  };
+
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, `${JSON.stringify(stored, null, 2)}\n`, "utf8");
+  return stored;
+}
+
+async function createJwks(): Promise<{ keys: JWK[]; publicKeyData: string }> {
+  const stored = await loadOrCreateSigningKey();
   return {
-    keys: [
-      {
-        ...jwk,
-        alg: "RS256",
-        use: "sig",
-        kid: "local-dev-rs256"
-      }
-    ],
-    publicKeyPem
+    keys: [stored.privateJwk],
+    publicKeyData: stored.publicKeyData
   };
 }
 
@@ -77,15 +112,18 @@ export async function setupOidcProvider(
   app: FastifyInstance,
   config: AppConfig,
   users: TestUser[]
-): Promise<Provider> {
+): Promise<any> {
   const userIndex = makeUserIndex(users);
   let selectedUsername = users[0]?.username;
   const jwks = await createJwks();
-  const jwtPublicKeyPem = jwks.publicKeyPem;
+  const jwtPublicKeyData = jwks.publicKeyData;
   const signingJwk = jwks.keys[0];
+  if (!signingJwk) {
+    throw new Error("Signing JWK is missing");
+  }
   const signingKey = await importJWK(signingJwk, "RS256");
 
-  const oidcConfig: Configuration = {
+  const oidcConfig = {
     routes: {
       authorization: "/protocol/openid-connect/auth",
       token: "/protocol/openid-connect/token",
@@ -115,9 +153,9 @@ export async function setupOidcProvider(
     },
     scopes: userIndex.allScopes,
     interactions: {
-      url: (_ctx, interaction) => `/login/${interaction.uid}`
+      url: (_ctx: any, interaction: any) => `/login/${interaction.uid}`
     },
-    extraTokenClaims: async (ctx) => {
+    extraTokenClaims: async (ctx: any) => {
       const accountId = ctx.oidc?.session?.accountId;
       if (!accountId) {
         return {};
@@ -142,7 +180,7 @@ export async function setupOidcProvider(
       email: ["email"],
       roles: ["realm_access", "resource_access"]
     },
-    findAccount: async (_ctx, accountId) => {
+    findAccount: async (_ctx: any, accountId: string) => {
       const user = userIndex.bySub.get(accountId);
       if (!user) {
         return undefined;
@@ -234,6 +272,7 @@ export async function setupOidcProvider(
 
     selectedUsername = user.username;
     const now = Math.floor(Date.now() / 1000);
+    const expiry = now + config.tokenTtlSeconds;
     const scope = user.scopes.join(" ");
     const realmAccess = { roles: user.realmRoles ?? [] };
     const resourceAccess = Object.fromEntries(
@@ -247,10 +286,10 @@ export async function setupOidcProvider(
     })
       .setProtectedHeader({ alg: "RS256", kid: "local-dev-rs256", typ: "JWT" })
       .setIssuer(config.issuer)
-      .setAudience(config.defaultAudience)
+      .setAudience(config.defaultAudiences)
       .setSubject(user.sub)
       .setIssuedAt(now)
-      .setExpirationTime(now + 3600)
+      .setExpirationTime(expiry)
       .sign(signingKey);
 
     const idToken = await new SignJWT({
@@ -264,12 +303,12 @@ export async function setupOidcProvider(
       .setAudience(config.clientId)
       .setSubject(user.sub)
       .setIssuedAt(now)
-      .setExpirationTime(now + 3600)
+      .setExpirationTime(expiry)
       .sign(signingKey);
 
     return reply.send({
       token_type: "Bearer",
-      expires_in: 3600,
+      expires_in: config.tokenTtlSeconds,
       scope,
       access_token: accessToken,
       id_token: idToken
@@ -324,10 +363,10 @@ export async function setupOidcProvider(
       sub: user.sub,
       username: user.username,
       scope: user.scopes.join(" "),
-      aud: config.defaultAudience,
+      aud: config.defaultAudiences,
       iss: config.issuer,
       iat: now,
-      exp: now + 3600,
+      exp: now + config.tokenTtlSeconds,
       realm_access: { roles: user.realmRoles ?? [] },
       resource_access: Object.fromEntries(
         Object.entries(user.clientRoles ?? {}).map(([clientId, roles]) => [clientId, { roles }])
@@ -337,13 +376,14 @@ export async function setupOidcProvider(
 
   // Backend compatibility helpers for systems configured with Issuer + JwtPublicKey.
   app.get("/protocol/openid-connect/jwt-public-key", async (_request, reply) => {
-    reply.type("text/plain").send(jwtPublicKeyPem);
+    reply.type("text/plain").send(jwtPublicKeyData);
   });
 
   app.get("/protocol/openid-connect/backend-config", async (_request, reply) => {
     return reply.send({
       issuer: config.issuer,
-      jwtPublicKey: jwtPublicKeyPem,
+      audiences: config.defaultAudiences,
+      jwtPublicKey: jwtPublicKeyData,
       jwtPublicKeyUrl: `${config.issuer}/protocol/openid-connect/jwt-public-key`,
       jwksUrl: `${config.issuer}/protocol/openid-connect/certs`
     });
